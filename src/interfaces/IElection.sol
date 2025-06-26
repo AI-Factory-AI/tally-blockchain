@@ -17,7 +17,7 @@ interface IElection {
     }
 
     /**
-     * @dev Enum representing the different types of voting systems
+     * @dev Enum representing the different types of voting systems 
      */
     enum VotingSystem {
         SingleChoice,

@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "../interfaces/IElection.sol";
+import "../interfaces/IVoteVerification.sol";
 
 /**
  * @title Election
