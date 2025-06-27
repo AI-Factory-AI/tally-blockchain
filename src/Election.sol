@@ -1,353 +1,444 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import "@openzeppelin/contracts/access/AccessControl.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import "../interfaces/IElection.sol";
-import "../interfaces/IVoteVerification.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 
 /**
  * @title Election
- * @dev Implementation of the IElection interface for managing a blockchain-based election
+ * @dev Individual election contract for managing a single election
+ * @author Election System
  */
-contract Election is IElection, AccessControl, ReentrancyGuard {
-    using ECDSA for bytes32;
-
-    // Constants for role definitions
-    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
-    bytes32 public constant VOTER_REGISTRAR_ROLE = keccak256("VOTER_REGISTRAR_ROLE");
-
-    // Election metadata
-    string public name;
-    string public description;
-    uint256 public startTime;
-    uint256 public endTime;
-    VotingSystem public votingSystem;
-    ElectionState public state;
-
-    // Election data structures
-    Candidate[] public candidates;
-    mapping(address => Voter) public voters;
-    mapping(uint256 => bool) public candidateExists;
-    uint256 public voterCount;
-    uint256 public totalVotes;
-
-    // For ranked choice voting
-    mapping(address => uint256[]) private rankedVotes;
+contract Election is Ownable, ReentrancyGuard, Pausable {
+    // ============ Constants ============
     
-    // For weighted voting
-    mapping(address => mapping(uint256 => uint256)) private weightedVotes;
-    uint256 public constant WEIGHT_PRECISION = 1e6; // precision for weighted votes
-
-    // For additional verification
-    mapping(address => bytes) private signatures;
-
-    // Modifiers
-    modifier onlyDuringState(ElectionState _state) {
-        require(state == _state, "Invalid election state for this operation");
-        _;
-    }
-
-    modifier onlyRegisteredVoter() {
-        require(voters[msg.sender].isRegistered, "Voter not registered");
-        _;
-    }
-
-    modifier hasNotVoted() {
-        require(!voters[msg.sender].hasVoted, "Voter has already voted");
-        _;
-    }
-
-    modifier electionActive() {
-        require(block.timestamp >= startTime && block.timestamp <= endTime, "Election not active");
-        require(state == ElectionState.Voting, "Election not in voting state");
-        _;
-    }
-
+    uint256 public constant MAX_TITLE_LENGTH = 200;
+    uint256 public constant MAX_DESCRIPTION_LENGTH = 5000;
+    uint256 public constant MAX_MESSAGE_LENGTH = 2000;
+    uint256 public constant MIN_ELECTION_DURATION = 1 hours;
+    uint256 public constant MAX_ELECTION_DURATION = 365 days;
+    
+    // ============ Structs ============
+    
     /**
-     * @dev Constructor to create a new election
+     * @dev Struct for election basic information
      */
+    struct ElectionBasicInfo {
+        string title;
+        string description;
+        address creator;
+        uint256 createdAt;
+        ElectionStatus status;
+    }
+    
+    /**
+     * @dev Struct for election timing configuration
+     */
+    struct ElectionTiming {
+        uint256 startTime;
+        uint256 endTime;
+        string timezone; // For reference only
+    }
+    
+    /**
+     * @dev Struct for election voting settings
+     */
+    struct VotingSettings {
+        bool weightedVoting;
+        bool ballotReceipt;
+        bool submitConfirmation;
+        uint256 maxVotersCount;
+        bool allowVoterRegistration;
+    }
+    
+    /**
+     * @dev Struct for election messages/instructions
+     */
+    struct ElectionMessages {
+        string loginInstructions;
+        string voteConfirmation;
+        string afterElectionMessage;
+    }
+    
+    /**
+     * @dev Struct for results configuration
+     */
+    struct ResultsConfig {
+        bool publicResults;
+        bool realTimeResults;
+        uint256 resultsReleaseTime;
+        bool allowResultsDownload;
+    }
+    
+    /**
+     * @dev Complete election configuration struct
+     */
+    struct ElectionConfig {
+        ElectionBasicInfo basicInfo;
+        ElectionTiming timing;
+        VotingSettings votingSettings;
+        ElectionMessages messages;
+        ResultsConfig resultsConfig;
+    }
+    
+    // ============ Enums ============
+    
+    enum ElectionStatus {
+        DRAFT,
+        SCHEDULED,
+        ACTIVE,
+        COMPLETED,
+        CANCELLED,
+        DELETED
+    }
+    
+    // ============ State Variables ============
+    
+    ElectionConfig public electionConfig;
+    address public immutable factory;
+    
+    // ============ Events ============
+    
+    event ElectionUpdated(
+        address indexed updater,
+        string field
+    );
+    
+    event ElectionStatusChanged(
+        ElectionStatus oldStatus,
+        ElectionStatus newStatus
+    );
+    
+    // ============ Modifiers ============
+    
+    modifier onlyElectionCreator() {
+        require(
+            electionConfig.basicInfo.creator == msg.sender,
+            "Election: Not the election creator"
+        );
+        _;
+    }
+    
+    modifier onlyCreatorOrFactory() {
+        require(
+            electionConfig.basicInfo.creator == msg.sender || msg.sender == factory,
+            "Election: Not authorized"
+        );
+        _;
+    }
+    
+    modifier validElectionTiming(uint256 _startTime, uint256 _endTime) {
+        require(_startTime > block.timestamp, "Election: Start time must be in the future");
+        require(_endTime > _startTime, "Election: End time must be after start time");
+        require(
+            _endTime - _startTime >= MIN_ELECTION_DURATION,
+            "Election: Election duration too short"
+        );
+        require(
+            _endTime - _startTime <= MAX_ELECTION_DURATION,
+            "Election: Election duration too long"
+        );
+        _;
+    }
+    
+    modifier notDeleted() {
+        require(
+            electionConfig.basicInfo.status != ElectionStatus.DELETED,
+            "Election: Election has been deleted"
+        );
+        _;
+    }
+    
+    // ============ Constructor ============
+    
     constructor(
-        string memory _name,
+        address _creator,
+        string memory _title,
         string memory _description,
         uint256 _startTime,
         uint256 _endTime,
-        VotingSystem _votingSystem,
-        string[] memory _candidateNames,
-        string[] memory _candidateInfo,
-        address _admin
-    ) {
-        require(_startTime > block.timestamp, "Start time must be in the future");
-        require(_endTime > _startTime, "End time must be after start time");
-        require(_candidateNames.length > 0, "Must have at least one candidate");
-        require(_candidateNames.length == _candidateInfo.length, "Candidate names and info must match");
-
-        name = _name;
-        description = _description;
-        startTime = _startTime;
-        endTime = _endTime;
-        votingSystem = _votingSystem;
-        state = ElectionState.Registration;
-
-        // Setup roles
-        _setupRole(DEFAULT_ADMIN_ROLE, _admin);
-        _setupRole(ADMIN_ROLE, _admin);
-        _setupRole(VOTER_REGISTRAR_ROLE, _admin);
-
-        // Add candidates
-        for (uint256 i = 0; i < _candidateNames.length; i++) {
-            candidates.push(
-                Candidate({
-                    id: i + 1,
-                    name: _candidateNames[i],
-                    information: _candidateInfo[i],
-                    voteCount: 0
-                })
+        string memory _timezone,
+        bool _weightedVoting,
+        bool _ballotReceipt,
+        bool _submitConfirmation,
+        uint256 _maxVotersCount,
+        bool _allowVoterRegistration,
+        string memory _loginInstructions,
+        string memory _voteConfirmation,
+        string memory _afterElectionMessage,
+        bool _publicResults,
+        bool _realTimeResults,
+        uint256 _resultsReleaseTime,
+        bool _allowResultsDownload
+    ) Ownable(_creator) {
+        factory = msg.sender;
+        
+        // Initialize election configuration
+        electionConfig.basicInfo = ElectionBasicInfo({
+            title: _title,
+            description: _description,
+            creator: _creator,
+            createdAt: block.timestamp,
+            status: ElectionStatus.DRAFT
+        });
+        
+        electionConfig.timing = ElectionTiming({
+            startTime: _startTime,
+            endTime: _endTime,
+            timezone: _timezone
+        });
+        
+        electionConfig.votingSettings = VotingSettings({
+            weightedVoting: _weightedVoting,
+            ballotReceipt: _ballotReceipt,
+            submitConfirmation: _submitConfirmation,
+            maxVotersCount: _maxVotersCount,
+            allowVoterRegistration: _allowVoterRegistration
+        });
+        
+        electionConfig.messages = ElectionMessages({
+            loginInstructions: _loginInstructions,
+            voteConfirmation: _voteConfirmation,
+            afterElectionMessage: _afterElectionMessage
+        });
+        
+        electionConfig.resultsConfig = ResultsConfig({
+            publicResults: _publicResults,
+            realTimeResults: _realTimeResults,
+            resultsReleaseTime: _resultsReleaseTime,
+            allowResultsDownload: _allowResultsDownload
+        });
+    }
+    
+    // ============ External Functions ============
+    
+    /**
+     * @dev Updates election basic information
+     * @param _title New title
+     * @param _description New description
+     */
+    function updateElectionBasicInfo(
+        string calldata _title,
+        string calldata _description
+    ) external onlyElectionCreator notDeleted {
+        require(
+            electionConfig.basicInfo.status == ElectionStatus.DRAFT,
+            "Election: Can only update draft elections"
+        );
+        
+        require(bytes(_title).length > 0 && bytes(_title).length <= MAX_TITLE_LENGTH, "Election: Invalid title length");
+        require(bytes(_description).length <= MAX_DESCRIPTION_LENGTH, "Election: Description too long");
+        
+        electionConfig.basicInfo.title = _title;
+        electionConfig.basicInfo.description = _description;
+        
+        emit ElectionUpdated(msg.sender, "basicInfo");
+    }
+    
+    /**
+     * @dev Updates election timing
+     * @param _startTime New start time
+     * @param _endTime New end time
+     * @param _timezone New timezone
+     */
+    function updateElectionTiming(
+        uint256 _startTime,
+        uint256 _endTime,
+        string calldata _timezone
+    ) external 
+        onlyElectionCreator 
+        notDeleted
+        validElectionTiming(_startTime, _endTime)
+    {
+        require(
+            electionConfig.basicInfo.status == ElectionStatus.DRAFT,
+            "Election: Can only update draft elections"
+        );
+        
+        electionConfig.timing.startTime = _startTime;
+        electionConfig.timing.endTime = _endTime;
+        electionConfig.timing.timezone = _timezone;
+        
+        emit ElectionUpdated(msg.sender, "timing");
+    }
+    
+    /**
+     * @dev Updates voting settings
+     * @param _settings New voting settings
+     */
+    function updateVotingSettings(
+        VotingSettings calldata _settings
+    ) external onlyElectionCreator notDeleted {
+        require(
+            electionConfig.basicInfo.status == ElectionStatus.DRAFT,
+            "Election: Can only update draft elections"
+        );
+        
+        electionConfig.votingSettings = _settings;
+        
+        emit ElectionUpdated(msg.sender, "votingSettings");
+    }
+    
+    /**
+     * @dev Updates election messages
+     * @param _messages New messages configuration
+     */
+    function updateElectionMessages(
+        ElectionMessages calldata _messages
+    ) external onlyElectionCreator notDeleted {
+        require(
+            electionConfig.basicInfo.status == ElectionStatus.DRAFT,
+            "Election: Can only update draft elections"
+        );
+        
+        require(bytes(_messages.loginInstructions).length <= MAX_MESSAGE_LENGTH, "Election: Login instructions too long");
+        require(bytes(_messages.voteConfirmation).length <= MAX_MESSAGE_LENGTH, "Election: Vote confirmation too long");
+        require(bytes(_messages.afterElectionMessage).length <= MAX_MESSAGE_LENGTH, "Election: After election message too long");
+        
+        electionConfig.messages = _messages;
+        
+        emit ElectionUpdated(msg.sender, "messages");
+    }
+    
+    /**
+     * @dev Updates results configuration
+     * @param _resultsConfig New results configuration
+     */
+    function updateResultsConfig(
+        ResultsConfig calldata _resultsConfig
+    ) external onlyElectionCreator notDeleted {
+        require(
+            electionConfig.basicInfo.status == ElectionStatus.DRAFT,
+            "Election: Can only update draft elections"
+        );
+        
+        electionConfig.resultsConfig = _resultsConfig;
+        
+        emit ElectionUpdated(msg.sender, "resultsConfig");
+    }
+    
+    /**
+     * @dev Changes election status
+     * @param _newStatus New status
+     */
+    function changeElectionStatus(
+        ElectionStatus _newStatus
+    ) external onlyCreatorOrFactory notDeleted {
+        ElectionStatus currentStatus = electionConfig.basicInfo.status;
+        require(currentStatus != _newStatus, "Election: Status unchanged");
+        
+        // Validate status transitions
+        _validateStatusTransition(currentStatus, _newStatus);
+        
+        electionConfig.basicInfo.status = _newStatus;
+        
+        emit ElectionStatusChanged(currentStatus, _newStatus);
+    }
+    
+    /**
+     * @dev Deletes an election (soft delete by changing status)
+     */
+    function deleteElection() external onlyElectionCreator notDeleted {
+        require(
+            electionConfig.basicInfo.status != ElectionStatus.ACTIVE,
+            "Election: Cannot delete active election"
+        );
+        
+        electionConfig.basicInfo.status = ElectionStatus.DELETED;
+        
+        emit ElectionStatusChanged(electionConfig.basicInfo.status, ElectionStatus.DELETED);
+    }
+    
+    // ============ View Functions ============
+    
+    /**
+     * @dev Gets complete election configuration
+     * @return Election configuration
+     */
+    function getElection() external view notDeleted returns (ElectionConfig memory) {
+        return electionConfig;
+    }
+    
+    /**
+     * @dev Gets election basic information
+     * @return Basic election information
+     */
+    function getElectionBasicInfo() external view notDeleted returns (ElectionBasicInfo memory) {
+        return electionConfig.basicInfo;
+    }
+    
+    /**
+     * @dev Gets election timing information
+     * @return Election timing information
+     */
+    function getElectionTiming() external view notDeleted returns (ElectionTiming memory) {
+        return electionConfig.timing;
+    }
+    
+    /**
+     * @dev Gets voting settings
+     * @return Voting settings
+     */
+    function getVotingSettings() external view notDeleted returns (VotingSettings memory) {
+        return electionConfig.votingSettings;
+    }
+    
+    /**
+     * @dev Gets election messages
+     * @return Election messages
+     */
+    function getElectionMessages() external view notDeleted returns (ElectionMessages memory) {
+        return electionConfig.messages;
+    }
+    
+    /**
+     * @dev Gets results configuration
+     * @return Results configuration
+     */
+    function getResultsConfig() external view notDeleted returns (ResultsConfig memory) {
+        return electionConfig.resultsConfig;
+    }
+    
+    // ============ Internal Functions ============
+    
+    /**
+     * @dev Validates status transitions
+     * @param _currentStatus Current election status
+     * @param _newStatus New election status
+     */
+    function _validateStatusTransition(ElectionStatus _currentStatus, ElectionStatus _newStatus) internal pure {
+        if (_currentStatus == ElectionStatus.DRAFT) {
+            require(
+                _newStatus == ElectionStatus.SCHEDULED || _newStatus == ElectionStatus.CANCELLED,
+                "Election: Invalid status transition from DRAFT"
             );
-            candidateExists[i + 1] = true;
+        } else if (_currentStatus == ElectionStatus.SCHEDULED) {
+            require(
+                _newStatus == ElectionStatus.ACTIVE || _newStatus == ElectionStatus.CANCELLED,
+                "Election: Invalid status transition from SCHEDULED"
+            );
+        } else if (_currentStatus == ElectionStatus.ACTIVE) {
+            require(
+                _newStatus == ElectionStatus.COMPLETED,
+                "Election: Invalid status transition from ACTIVE"
+            );
+        } else {
+            revert("Election: Invalid status transition");
         }
-
-        emit ElectionCreated(address(this), _name, _startTime, _endTime, _votingSystem);
     }
-
+    
     /**
-     * @dev Function to register a voter
-     * @param _voter Address of the voter
+     * @dev Pauses the election
      */
-    function registerVoter(address _voter) external override onlyRole(VOTER_REGISTRAR_ROLE) onlyDuringState(ElectionState.Registration) {
-        require(_voter != address(0), "Invalid voter address");
-        require(!voters[_voter].isRegistered, "Voter already registered");
-
-        voters[_voter].isRegistered = true;
-        voterCount++;
-
-        emit VoterRegistered(_voter);
+    function pause() external onlyElectionCreator {
+        _pause();
     }
-
+    
     /**
-     * @dev Function to cast a vote in a single choice election
-     * @param _candidateId ID of the candidate
+     * @dev Unpauses the election
      */
-    function castVote(uint256 _candidateId) external override onlyRegisteredVoter hasNotVoted electionActive {
-        require(votingSystem == VotingSystem.SingleChoice, "Incorrect voting method");
-        require(candidateExists[_candidateId], "Invalid candidate ID");
-
-        _recordVote(msg.sender);
-        candidates[_candidateId - 1].voteCount++;
-        totalVotes++;
-
-        // Create a hash of the vote for verification
-        voters[msg.sender].voteHash = keccak256(abi.encodePacked(msg.sender, _candidateId));
-
-        emit VoteCast(msg.sender);
-    }
-
-    /**
-     * @dev Function to cast a ranked choice vote
-     * @param _rankedCandidates Array of candidate IDs in order of preference
-     */
-    function castRankedVote(uint256[] calldata _rankedCandidates) external override onlyRegisteredVoter hasNotVoted electionActive {
-        require(votingSystem == VotingSystem.RankedChoice, "Incorrect voting method");
-        require(_rankedCandidates.length > 0, "Must rank at least one candidate");
-        
-        // Validate candidate IDs
-        for (uint256 i = 0; i < _rankedCandidates.length; i++) {
-            require(candidateExists[_rankedCandidates[i]], "Invalid candidate ID");
-        }
-
-        _recordVote(msg.sender);
-        
-        // Store ranked vote
-        rankedVotes[msg.sender] = _rankedCandidates;
-        
-        // Count first choice votes for initial tally
-        candidates[_rankedCandidates[0] - 1].voteCount++;
-        totalVotes++;
-
-        // Create a hash of the vote for verification
-        voters[msg.sender].voteHash = keccak256(abi.encodePacked(msg.sender, _rankedCandidates));
-
-        emit VoteCast(msg.sender);
-    }
-
-    /**
-     * @dev Function to cast a weighted vote
-     * @param _candidateIds Array of candidate IDs
-     * @param _weights Array of weights corresponding to each candidate
-     */
-    function castWeightedVote(
-        uint256[] calldata _candidateIds,
-        uint256[] calldata _weights
-    ) external override onlyRegisteredVoter hasNotVoted electionActive {
-        require(votingSystem == VotingSystem.Weighted, "Incorrect voting method");
-        require(_candidateIds.length > 0, "Must vote for at least one candidate");
-        require(_candidateIds.length == _weights.length, "Candidate IDs and weights must match");
-        
-        uint256 totalWeight = 0;
-        for (uint256 i = 0; i < _weights.length; i++) {
-            totalWeight += _weights[i];
-        }
-        require(totalWeight == WEIGHT_PRECISION, "Total weight must equal precision value");
-
-        _recordVote(msg.sender);
-        
-        // Store weighted votes and update vote counts
-        for (uint256 i = 0; i < _candidateIds.length; i++) {
-            require(candidateExists[_candidateIds[i]], "Invalid candidate ID");
-            weightedVotes[msg.sender][_candidateIds[i]] = _weights[i];
-            
-            // Update vote count proportionally
-            candidates[_candidateIds[i] - 1].voteCount += _weights[i];
-        }
-        totalVotes++;
-
-        // Create a hash of the vote for verification
-        voters[msg.sender].voteHash = keccak256(abi.encodePacked(msg.sender, _candidateIds, _weights));
-
-        emit VoteCast(msg.sender);
-    }
-
-    /**
-     * @dev Internal function to record a vote
-     * @param _voter Address of the voter
-     */
-    function _recordVote(address _voter) private {
-        voters[_voter].hasVoted = true;
-    }
-
-    /**
-     * @dev Function to verify a vote was recorded
-     * @param _voter Address of the voter
-     * @return bool True if the vote was recorded
-     */
-    function verifyVote(address _voter) external view override returns (bool) {
-        return voters[_voter].hasVoted;
-    }
-
-    /**
-     * @dev Function to get the hash of a voter's vote
-     * @param _voter Address of the voter
-     * @return bytes32 Hash of the vote
-     */
-    function getVoteHash(address _voter) external view returns (bytes32) {
-        require(voters[_voter].hasVoted, "Voter has not voted");
-        return voters[_voter].voteHash;
-    }
-
-    /**
-     * @dev Function to start the election
-     * Only callable by admin
-     */
-    function startElection() external onlyRole(ADMIN_ROLE) {
-        require(block.timestamp >= startTime, "Start time not reached");
-        require(state == ElectionState.Registration, "Election not in registration state");
-        
-        state = ElectionState.Voting;
-        emit ElectionStateChanged(ElectionState.Voting);
-    }
-
-    /**
-     * @dev Function to end the election
-     * Only callable by admin, or automatically when endTime is reached
-     */
-    function endElection() external {
-        require(
-            hasRole(ADMIN_ROLE, msg.sender) || block.timestamp > endTime,
-            "Not authorized or end time not reached"
-        );
-        require(state == ElectionState.Voting, "Election not in voting state");
-        
-        state = ElectionState.Ended;
-        emit ElectionStateChanged(ElectionState.Ended);
-    }
-
-    /**
-     * @dev Function to get the current state of the election
-     * @return ElectionState Current state
-     */
-    function getElectionState() external view override returns (ElectionState) {
-        if (state == ElectionState.Voting && block.timestamp > endTime) {
-            return ElectionState.Ended;
-        }
-        return state;
-    }
-
-    /**
-     * @dev Function to get all candidates
-     * @return Candidate[] Array of candidates
-     */
-    function getCandidates() external view returns (Candidate[] memory) {
-        return candidates;
-    }
-
-    /**
-     * @dev Function to get the number of candidates
-     * @return uint256 Number of candidates
-     */
-    function getCandidateCount() external view returns (uint256) {
-        return candidates.length;
-    }
-
-    /**
-     * @dev Function to get election results
-     * @return Candidate[] Array of candidates with vote counts
-     */
-    function getResults() external view override returns (Candidate[] memory) {
-        require(
-            state == ElectionState.Ended || block.timestamp > endTime,
-            "Election still in progress"
-        );
-        
-        return candidates;
-    }
-
-    /**
-     * @dev Function to calculate final results for ranked choice voting
-     * Only relevant for ranked choice elections and callable after election ends
-     * @return Candidate[] Final results after elimination rounds
-     */
-    function calculateRankedChoiceResults() external view onlyRole(ADMIN_ROLE) returns (Candidate[] memory) {
-        require(votingSystem == VotingSystem.RankedChoice, "Not a ranked choice election");
-        require(state == ElectionState.Ended || block.timestamp > endTime, "Election still in progress");
-        
-        // In a real implementation, this would run the instant-runoff algorithm
-        // For simplicity, we're just returning the current vote counts
-        return candidates;
-    }
-
-    /**
-     * @dev Function to update the election metadata
-     * Only callable by admin and before voting starts
-     */
-    function updateElectionMetadata(
-        string calldata _newName,
-        string calldata _newDescription
-    ) external onlyRole(ADMIN_ROLE) {
-        require(state == ElectionState.Registration, "Cannot update after registration period");
-        
-        name = _newName;
-        description = _newDescription;
-    }
-
-    /**
-     * @dev Function to extend voting period
-     * Only callable by admin and before the election ends
-     */
-    function extendVotingPeriod(uint256 _newEndTime) external onlyRole(ADMIN_ROLE) {
-        require(state == ElectionState.Voting, "Election not in voting state");
-        require(block.timestamp < endTime, "Election already ended");
-        require(_newEndTime > endTime, "New end time must be later than current end time");
-        
-        endTime = _newEndTime;
-    }
-
-    /**
-     * @dev Function to get the participation rate
-     * @return uint256 Participation rate as a percentage (with 2 decimal precision)
-     */
-    function getParticipationRate() external view returns (uint256) {
-        if (voterCount == 0) return 0;
-        return (totalVotes * 10000) / voterCount; // Returns percentage with 2 decimal places
+    function unpause() external onlyElectionCreator {
+        _unpause();
     }
 }

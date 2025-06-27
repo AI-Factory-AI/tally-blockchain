@@ -2,140 +2,360 @@
 pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "../interfaces/IElectionFactory.sol";
-import "../interfaces/IElection.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 import "./Election.sol";
 
 /**
  * @title ElectionFactory
- * @dev Contract for creating and managing election contracts
+ * @dev Factory contract for creating and managing multiple elections
+ * @author Election System
  */
-contract ElectionFactory is IElectionFactory, Ownable, ReentrancyGuard {
-    // Mapping from creator address to their elections
-    mapping(address => address[]) private creatorToElections;
+contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
+    // ============ State Variables ============
     
-    // All elections created by this factory
-    address[] private allElections;
+    uint256 private _electionIds;
     
-    // Mapping to check if an address is a valid election
-    mapping(address => bool) private validElections;
+    // Election fee (can be 0 for free elections)
+    uint256 public electionCreationFee;
     
-    // Election creation fee (if any)
-    uint256 public creationFee;
-
+    // ============ Structs ============
+    
     /**
-     * @dev Constructor
-     * @param _initialOwner The initial owner of the contract
-     * @param _initialFee The initial fee for creating an election (can be 0)
+     * @dev Input struct for creating elections (avoids stack too deep)
      */
-    constructor(address _initialOwner, uint256 _initialFee) Ownable(_initialOwner) {
-        creationFee = _initialFee;
+    struct CreateElectionInput {
+        string title;
+        string description;
+        uint256 startTime;
+        uint256 endTime;
+        string timezone;
+        bool weightedVoting;
+        bool ballotReceipt;
+        bool submitConfirmation;
+        uint256 maxVotersCount;
+        bool allowVoterRegistration;
+        string loginInstructions;
+        string voteConfirmation;
+        string afterElectionMessage;
+        bool publicResults;
+        bool realTimeResults;
+        uint256 resultsReleaseTime;
+        bool allowResultsDownload;
     }
-
+    
+    // ============ Mappings ============
+    
+    mapping(uint256 => address) public elections;
+    mapping(address => uint256[]) public creatorElections;
+    mapping(uint256 => bool) public electionExists;
+    mapping(address => bool) public isElectionContract;
+    
+    // ============ Events ============
+    
+    event ElectionCreated(
+        uint256 indexed electionId,
+        address indexed electionContract,
+        address indexed creator,
+        string title,
+        uint256 startTime,
+        uint256 endTime
+    );
+    
+    event ElectionDeleted(
+        uint256 indexed electionId,
+        address indexed electionContract,
+        address indexed deleter
+    );
+    
+    event ElectionFeeUpdated(
+        uint256 oldFee,
+        uint256 newFee
+    );
+    
+    // ============ Modifiers ============
+    
+    modifier validElectionTiming(uint256 _startTime, uint256 _endTime) {
+        require(_startTime > block.timestamp, "ElectionFactory: Start time must be in the future");
+        require(_endTime > _startTime, "ElectionFactory: End time must be after start time");
+        require(
+            _endTime - _startTime >= 1 hours,
+            "ElectionFactory: Election duration too short"
+        );
+        require(
+            _endTime - _startTime <= 365 days,
+            "ElectionFactory: Election duration too long"
+        );
+        _;
+    }
+    
+    modifier electionExists(uint256 _electionId) {
+        require(electionExists[_electionId], "ElectionFactory: Election does not exist");
+        _;
+    }
+    
+    // ============ Constructor ============
+    
+    constructor(uint256 _electionCreationFee) Ownable(msg.sender) {
+        electionCreationFee = _electionCreationFee;
+    }
+    
+    // ============ External Functions ============
+    
     /**
-     * @dev Creates a new election contract
-     * @param _name Name of the election
-     * @param _description Description of the election
-     * @param _startTime Start time of the election
-     * @param _endTime End time of the election
-     * @param _votingSystem Type of voting system
-     * @param _candidateNames Array of candidate names
-     * @param _candidateInfo Array of candidate information
-     * @return address Address of the created election contract
+     * @dev Creates a new election with comprehensive configuration
+     * @param input Complete election configuration input
+     * @return electionId The ID of the newly created election
+     * @return electionContract The address of the newly created election contract
      */
-    function createElection(
-        string calldata _name,
-        string calldata _description,
-        uint256 _startTime,
-        uint256 _endTime,
-        IElection.VotingSystem _votingSystem,
-        string[] calldata _candidateNames,
-        string[] calldata _candidateInfo
-    ) external payable override nonReentrant returns (address) {
-        // Validate inputs
-        require(_startTime > block.timestamp, "Start time must be in the future");
-        require(_endTime > _startTime, "End time must be after start time");
-        require(_candidateNames.length > 0, "Must have at least one candidate");
-        require(_candidateNames.length == _candidateInfo.length, "Candidate names and info must match");
+    function createElection(CreateElectionInput calldata input) 
+        external 
+        payable 
+        nonReentrant 
+        whenNotPaused 
+        validElectionTiming(input.startTime, input.endTime)
+        returns (uint256 electionId, address electionContract) 
+    {
+        // Validate payment
+        require(msg.value >= electionCreationFee, "ElectionFactory: Insufficient fee");
         
-        // Check fee if applicable
-        if (creationFee > 0) {
-            require(msg.value >= creationFee, "Insufficient fee");
-        }
+        // Validate input strings
+        _validateElectionStrings(input);
         
-        // Create new election contract
-        Election election = new Election(
-            _name,
-            _description,
-            _startTime,
-            _endTime,
-            _votingSystem,
-            _candidateNames,
-            _candidateInfo,
-            msg.sender
+        // Increment election ID counter
+        _electionIds++;
+        electionId = _electionIds;
+        
+        // Deploy new Election contract
+        Election newElection = new Election(
+            msg.sender,
+            input.title,
+            input.description,
+            input.startTime,
+            input.endTime,
+            input.timezone,
+            input.weightedVoting,
+            input.ballotReceipt,
+            input.submitConfirmation,
+            input.maxVotersCount,
+            input.allowVoterRegistration,
+            input.loginInstructions,
+            input.voteConfirmation,
+            input.afterElectionMessage,
+            input.publicResults,
+            input.realTimeResults,
+            input.resultsReleaseTime,
+            input.allowResultsDownload
         );
         
-        // Store election
-        address electionAddress = address(election);
-        creatorToElections[msg.sender].push(electionAddress);
-        allElections.push(electionAddress);
-        validElections[electionAddress] = true;
+        electionContract = address(newElection);
         
-        // Return excess fee if any
-        if (msg.value > creationFee) {
-            (bool success, ) = payable(msg.sender).call{value: msg.value - creationFee}("");
-            require(success, "Fee refund failed");
+        // Update mappings
+        elections[electionId] = electionContract;
+        electionExists[electionId] = true;
+        isElectionContract[electionContract] = true;
+        creatorElections[msg.sender].push(electionId);
+        
+        // Emit event
+        emit ElectionCreated(
+            electionId,
+            electionContract,
+            msg.sender,
+            input.title,
+            input.startTime,
+            input.endTime
+        );
+        
+        // Refund excess payment
+        if (msg.value > electionCreationFee) {
+            payable(msg.sender).transfer(msg.value - electionCreationFee);
         }
         
-        emit ElectionCreated(electionAddress, _name, msg.sender);
+        return (electionId, electionContract);
+    }
+    
+    /**
+     * @dev Deletes an election by marking it as deleted in the factory
+     * @param _electionId ID of the election to delete
+     */
+    function deleteElection(uint256 _electionId) 
+        external 
+        electionExists(_electionId)
+    {
+        address electionContract = elections[_electionId];
+        Election election = Election(electionContract);
         
-        return electionAddress;
+        // Check if caller is the creator
+        Election.ElectionBasicInfo memory basicInfo = election.getElectionBasicInfo();
+        require(basicInfo.creator == msg.sender, "ElectionFactory: Not the election creator");
+        
+        // Call delete on the election contract
+        election.deleteElection();
+        
+        emit ElectionDeleted(_electionId, electionContract, msg.sender);
     }
-
+    
+    // ============ View Functions ============
+    
     /**
-     * @dev Get all elections created by a specific address
+     * @dev Gets the election contract address by ID
+     * @param _electionId ID of the election
+     * @return Address of the election contract
+     */
+    function getElectionContract(uint256 _electionId) 
+        external 
+        view 
+        electionExists(_electionId) 
+        returns (address) 
+    {
+        return elections[_electionId];
+    }
+    
+    /**
+     * @dev Gets complete election configuration by ID
+     * @param _electionId ID of the election
+     * @return Election configuration
+     */
+    function getElection(uint256 _electionId) 
+        external 
+        view 
+        electionExists(_electionId) 
+        returns (Election.ElectionConfig memory) 
+    {
+        Election election = Election(elections[_electionId]);
+        return election.getElection();
+    }
+    
+    /**
+     * @dev Gets election basic information by ID
+     * @param _electionId ID of the election
+     * @return Basic election information
+     */
+    function getElectionBasicInfo(uint256 _electionId) 
+        external 
+        view 
+        electionExists(_electionId) 
+        returns (Election.ElectionBasicInfo memory) 
+    {
+        Election election = Election(elections[_electionId]);
+        return election.getElectionBasicInfo();
+    }
+    
+    /**
+     * @dev Gets elections created by a specific address
      * @param _creator Address of the creator
-     * @return address[] Array of election addresses
+     * @return Array of election IDs
      */
-    function getElectionsByCreator(address _creator) external view override returns (address[] memory) {
-        return creatorToElections[_creator];
+    function getElectionsByCreator(address _creator) 
+        external 
+        view 
+        returns (uint256[] memory) 
+    {
+        return creatorElections[_creator];
     }
     
     /**
-     * @dev Get all elections created by this factory
-     * @return address[] Array of all election addresses
+     * @dev Gets the current election ID counter
+     * @return Current election count
      */
-    function getAllElections() external view returns (address[] memory) {
-        return allElections;
+    function getCurrentElectionId() external view returns (uint256) {
+        return _electionIds;
     }
     
     /**
-     * @dev Check if an address is a valid election created by this factory
-     * @param _election Address to check
-     * @return bool True if the address is a valid election
+     * @dev Gets all election IDs and their contract addresses
+     * @return electionIds Array of election IDs
+     * @return electionContracts Array of corresponding contract addresses
      */
-    function isValidElection(address _election) external view override returns (bool) {
-        return validElections[_election];
+    function getAllElections() 
+        external 
+        view 
+        returns (uint256[] memory electionIds, address[] memory electionContracts) 
+    {
+        uint256 totalElections = _electionIds;
+        electionIds = new uint256[](totalElections);
+        electionContracts = new address[](totalElections);
+        
+        for (uint256 i = 1; i <= totalElections; i++) {
+            electionIds[i - 1] = i;
+            electionContracts[i - 1] = elections[i];
+        }
+        
+        return (electionIds, electionContracts);
     }
     
     /**
-     * @dev Set the creation fee
+     * @dev Gets election contracts created by a specific address
+     * @param _creator Address of the creator
+     * @return Array of election contract addresses
+     */
+    function getElectionContractsByCreator(address _creator) 
+        external 
+        view 
+        returns (address[] memory) 
+    {
+        uint256[] memory electionIds = creatorElections[_creator];
+        address[] memory electionContracts = new address[](electionIds.length);
+        
+        for (uint256 i = 0; i < electionIds.length; i++) {
+            electionContracts[i] = elections[electionIds[i]];
+        }
+        
+        return electionContracts;
+    }
+    
+    // ============ Owner Functions ============
+    
+    /**
+     * @dev Updates the election creation fee
      * @param _newFee New fee amount
-     * Only callable by the owner
      */
-    function setCreationFee(uint256 _newFee) external onlyOwner {
-        creationFee = _newFee;
+    function updateElectionFee(uint256 _newFee) external onlyOwner {
+        uint256 oldFee = electionCreationFee;
+        electionCreationFee = _newFee;
+        
+        emit ElectionFeeUpdated(oldFee, _newFee);
     }
     
     /**
-     * @dev Withdraw accumulated fees
-     * @param _amount Amount to withdraw
-     * Only callable by the owner
+     * @dev Withdraws accumulated fees
+     * @param _to Address to send fees to
      */
-    function withdrawFees(uint256 _amount) external onlyOwner {
-        require(address(this).balance >= _amount, "Insufficient balance");
-        (bool success, ) = owner().call{value: _amount}("");
-        require(success, "Withdrawal failed");
+    function withdrawFees(address payable _to) external onlyOwner {
+        require(_to != address(0), "ElectionFactory: Invalid address");
+        
+        uint256 balance = address(this).balance;
+        require(balance > 0, "ElectionFactory: No fees to withdraw");
+        
+        _to.transfer(balance);
+    }
+    
+    /**
+     * @dev Pauses the contract
+     */
+    function pause() external onlyOwner {
+        _pause();
+    }
+    
+    /**
+     * @dev Unpauses the contract
+     */
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+    
+    // ============ Internal Functions ============
+    
+    /**
+     * @dev Validates election string inputs
+     * @param input Election input to validate
+     */
+    function _validateElectionStrings(CreateElectionInput calldata input) internal pure {
+        require(bytes(input.title).length > 0, "ElectionFactory: Title cannot be empty");
+        require(bytes(input.title).length <= 200, "ElectionFactory: Title too long");
+        require(bytes(input.description).length <= 5000, "ElectionFactory: Description too long");
+        require(bytes(input.loginInstructions).length <= 2000, "ElectionFactory: Login instructions too long");
+        require(bytes(input.voteConfirmation).length <= 2000, "ElectionFactory: Vote confirmation too long");
+        require(bytes(input.afterElectionMessage).length <= 2000, "ElectionFactory: After election message too long");
     }
 }
