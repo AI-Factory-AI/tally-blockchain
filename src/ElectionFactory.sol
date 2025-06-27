@@ -89,7 +89,7 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
         _;
     }
     
-    modifier electionExists(uint256 _electionId) {
+    modifier electionMustExist(uint256 _electionId) {
         require(electionExists[_electionId], "ElectionFactory: Election does not exist");
         _;
     }
@@ -127,7 +127,7 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
         electionId = _electionIds;
         
         // Deploy new Election contract
-        Election newElection = new Election(
+        ElectionSetup newElection = new ElectionSetup(
             msg.sender,
             input.title,
             input.description,
@@ -180,13 +180,13 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
      */
     function deleteElection(uint256 _electionId) 
         external 
-        electionExists(_electionId)
+        electionMustExist(_electionId)
     {
         address electionContract = elections[_electionId];
-        Election election = Election(electionContract);
+        ElectionSetup election = ElectionSetup(electionContract);
         
         // Check if caller is the creator
-        Election.ElectionBasicInfo memory basicInfo = election.getElectionBasicInfo();
+        ElectionSetup.ElectionBasicInfo memory basicInfo = election.getElectionBasicInfo();
         require(basicInfo.creator == msg.sender, "ElectionFactory: Not the election creator");
         
         // Call delete on the election contract
@@ -205,7 +205,7 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
     function getElectionContract(uint256 _electionId) 
         external 
         view 
-        electionExists(_electionId) 
+        electionMustExist(_electionId) 
         returns (address) 
     {
         return elections[_electionId];
@@ -219,10 +219,10 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
     function getElection(uint256 _electionId) 
         external 
         view 
-        electionExists(_electionId) 
-        returns (Election.ElectionConfig memory) 
+        electionMustExist(_electionId) 
+        returns (ElectionSetup.ElectionConfig memory) 
     {
-        Election election = Election(elections[_electionId]);
+        ElectionSetup election = ElectionSetup(elections[_electionId]);
         return election.getElection();
     }
     
@@ -234,10 +234,10 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
     function getElectionBasicInfo(uint256 _electionId) 
         external 
         view 
-        electionExists(_electionId) 
-        returns (Election.ElectionBasicInfo memory) 
+        electionMustExist(_electionId) 
+        returns (ElectionSetup.ElectionBasicInfo memory) 
     {
-        Election election = Election(elections[_electionId]);
+        ElectionSetup election = ElectionSetup(elections[_electionId]);
         return election.getElectionBasicInfo();
     }
     

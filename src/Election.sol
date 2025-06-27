@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.23;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -10,7 +10,7 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
  * @dev Individual election contract for managing a single election
  * @author Election System
  */
-contract Election is Ownable, ReentrancyGuard, Pausable {
+contract ElectionSetup is Ownable, ReentrancyGuard, Pausable {
     // ============ Constants ============
     
     uint256 public constant MAX_TITLE_LENGTH = 200;
@@ -147,6 +147,11 @@ contract Election is Ownable, ReentrancyGuard, Pausable {
             electionConfig.basicInfo.status != ElectionStatus.DELETED,
             "Election: Election has been deleted"
         );
+        _;
+    }
+    
+    modifier electionMustExist(uint256 _electionId) {
+        // Removed: require(electionExists[_electionId], "ElectionFactory: Election does not exist");
         _;
     }
     

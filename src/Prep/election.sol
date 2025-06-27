@@ -1,5 +1,4 @@
-// // SPDX-License-Identifier: MIT
-// pragma solidity ^0.8.19;
+pragma solidity ^0.8.23;
 
 // import "@openzeppelin/contracts/access/Ownable.sol";
 // import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -170,12 +169,8 @@
 //         _;
 //     }
     
-//     modifier electionExistsAndNotDeleted(uint256 _electionId) {
+//     modifier electionMustExist(uint256 _electionId) {
 //         require(electionExists[_electionId], "ElectionFactory: Election does not exist");
-//         require(
-//             elections[_electionId].basicInfo.status != ElectionStatus.DELETED,
-//             "ElectionFactory: Election has been deleted"
-//         );
 //         _;
 //     }
     
@@ -298,7 +293,7 @@
 //         uint256 _electionId,
 //         string calldata _title,
 //         string calldata _description
-//     ) external onlyElectionCreator(_electionId) electionExistsAndNotDeleted(_electionId) {
+//     ) external onlyElectionCreator(_electionId) electionMustExist(_electionId) {
 //         require(
 //             elections[_electionId].basicInfo.status == ElectionStatus.DRAFT,
 //             "ElectionFactory: Can only update draft elections"
@@ -327,7 +322,7 @@
 //         string calldata _timezone
 //     ) external 
 //         onlyElectionCreator(_electionId) 
-//         electionExistsAndNotDeleted(_electionId)
+//         electionMustExist(_electionId)
 //         validElectionTiming(_startTime, _endTime)
 //     {
 //         require(
@@ -350,7 +345,7 @@
 //     function updateVotingSettings(
 //         uint256 _electionId,
 //         VotingSettings calldata _settings
-//     ) external onlyElectionCreator(_electionId) electionExistsAndNotDeleted(_electionId) {
+//     ) external onlyElectionCreator(_electionId) electionMustExist(_electionId) {
 //         require(
 //             elections[_electionId].basicInfo.status == ElectionStatus.DRAFT,
 //             "ElectionFactory: Can only update draft elections"
@@ -369,7 +364,7 @@
 //     function updateElectionMessages(
 //         uint256 _electionId,
 //         ElectionMessages calldata _messages
-//     ) external onlyElectionCreator(_electionId) electionExistsAndNotDeleted(_electionId) {
+//     ) external onlyElectionCreator(_electionId) electionMustExist(_electionId) {
 //         require(
 //             elections[_electionId].basicInfo.status == ElectionStatus.DRAFT,
 //             "ElectionFactory: Can only update draft elections"
@@ -392,7 +387,7 @@
 //     function updateResultsConfig(
 //         uint256 _electionId,
 //         ResultsConfig calldata _resultsConfig
-//     ) external onlyElectionCreator(_electionId) electionExistsAndNotDeleted(_electionId) {
+//     ) external onlyElectionCreator(_electionId) electionMustExist(_electionId) {
 //         require(
 //             elections[_electionId].basicInfo.status == ElectionStatus.DRAFT,
 //             "ElectionFactory: Can only update draft elections"
@@ -411,7 +406,7 @@
 //     function changeElectionStatus(
 //         uint256 _electionId,
 //         ElectionStatus _newStatus
-//     ) external onlyElectionCreator(_electionId) electionExistsAndNotDeleted(_electionId) {
+//     ) external onlyElectionCreator(_electionId) electionMustExist(_electionId) {
 //         ElectionStatus currentStatus = elections[_electionId].basicInfo.status;
 //         require(currentStatus != _newStatus, "ElectionFactory: Status unchanged");
         
@@ -430,7 +425,7 @@
 //     function deleteElection(uint256 _electionId) 
 //         external 
 //         onlyElectionCreator(_electionId) 
-//         electionExistsAndNotDeleted(_electionId) 
+//         electionMustExist(_electionId) 
 //     {
 //         require(
 //             elections[_electionId].basicInfo.status != ElectionStatus.ACTIVE,
@@ -452,7 +447,7 @@
 //     function getElection(uint256 _electionId) 
 //         external 
 //         view 
-//         electionExistsAndNotDeleted(_electionId) 
+//         electionMustExist(_electionId) 
 //         returns (ElectionConfig memory) 
 //     {
 //         return elections[_electionId];
@@ -466,7 +461,7 @@
 //     // function getElectionBasicInfo(uint256 _electionId) 
 //     //     external 
 //     //     view 
-//     //     electionExistsAndNotDeleted(_electionId) 
+//     //     electionMustExist(_electionId) 
 //     //     returns (ElectionBasicInfo memory) 
 //     // {
 //     //     return elections[_electionId].basicInfo;
