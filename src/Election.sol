@@ -45,7 +45,6 @@ contract ElectionSetup is Ownable, ReentrancyGuard, Pausable {
      * @dev Struct for election voting settings
      */
     struct VotingSettings {
-        bool weightedVoting;
         bool ballotReceipt;
         bool submitConfirmation;
         uint256 maxVotersCount;
@@ -164,7 +163,7 @@ contract ElectionSetup is Ownable, ReentrancyGuard, Pausable {
         uint256 _startTime,
         uint256 _endTime,
         string memory _timezone,
-        bool _weightedVoting,
+    
         bool _ballotReceipt,
         bool _submitConfirmation,
         uint256 _maxVotersCount,
@@ -195,7 +194,6 @@ contract ElectionSetup is Ownable, ReentrancyGuard, Pausable {
         });
         
         electionConfig.votingSettings = VotingSettings({
-            weightedVoting: _weightedVoting,
             ballotReceipt: _ballotReceipt,
             submitConfirmation: _submitConfirmation,
             maxVotersCount: _maxVotersCount,
@@ -217,7 +215,7 @@ contract ElectionSetup is Ownable, ReentrancyGuard, Pausable {
     }
     
     // ============ External Functions ============
-    
+     
     /**
      * @dev Updates election basic information
      * @param _title New title

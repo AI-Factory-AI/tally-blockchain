@@ -30,7 +30,6 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
         uint256 startTime;
         uint256 endTime;
         string timezone;
-        bool weightedVoting;
         bool ballotReceipt;
         bool submitConfirmation;
         uint256 maxVotersCount;
@@ -134,7 +133,6 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
             input.startTime,
             input.endTime,
             input.timezone,
-            input.weightedVoting,
             input.ballotReceipt,
             input.submitConfirmation,
             input.maxVotersCount,
