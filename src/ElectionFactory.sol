@@ -4,6 +4,8 @@ pragma solidity ^0.8.19;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "./interfaces/IElectionFactory.sol";
+import "./interfaces/IElection.sol";
 import "./Election.sol";
 
 /**
@@ -11,37 +13,13 @@ import "./Election.sol";
  * @dev Factory contract for creating and managing multiple elections
  * @author Election System
  */
-contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
+contract ElectionFactory is IElectionFactory, Ownable, ReentrancyGuard, Pausable {
     // ============ State Variables ============
     
     uint256 private _electionIds;
     
     // Election fee (can be 0 for free elections)
     uint256 public electionCreationFee;
-    
-    // ============ Structs ============
-    
-    /**
-     * @dev Input struct for creating elections (avoids stack too deep)
-     */
-    struct CreateElectionInput {
-        string title;
-        string description;
-        uint256 startTime;
-        uint256 endTime;
-        string timezone;
-        bool ballotReceipt;
-        bool submitConfirmation;
-        uint256 maxVotersCount;
-        bool allowVoterRegistration;
-        string loginInstructions;
-        string voteConfirmation;
-        string afterElectionMessage;
-        bool publicResults;
-        bool realTimeResults;
-        uint256 resultsReleaseTime;
-        bool allowResultsDownload;
-    }
     
     // ============ Mappings ============
     
@@ -110,6 +88,7 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
     function createElection(CreateElectionInput calldata input) 
         external 
         payable 
+        override
         nonReentrant 
         whenNotPaused 
         validElectionTiming(input.startTime, input.endTime)
@@ -126,7 +105,7 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
         electionId = _electionIds;
         
         // Deploy new Election contract
-        ElectionSetup newElection = new ElectionSetup(
+        Election newElection = new Election(
             msg.sender,
             input.title,
             input.description,
@@ -154,6 +133,11 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
         isElectionContract[electionContract] = true;
         creatorElections[msg.sender].push(electionId);
         
+        // Generate election URL
+        string memory baseUrl = "https://tally/vote/";
+        string memory electionUrl = string(abi.encodePacked(baseUrl, _uint2str(electionId)));
+        newElection.setElectionUrl(electionUrl);
+        
         // Emit event
         emit ElectionCreated(
             electionId,
@@ -178,13 +162,14 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
      */
     function deleteElection(uint256 _electionId) 
         external 
+        override
         electionMustExist(_electionId)
     {
         address electionContract = elections[_electionId];
-        ElectionSetup election = ElectionSetup(electionContract);
+        Election election = Election(electionContract);
         
         // Check if caller is the creator
-        ElectionSetup.ElectionBasicInfo memory basicInfo = election.getElectionBasicInfo();
+        IElection.ElectionBasicInfo memory basicInfo = election.getElectionBasicInfo();
         require(basicInfo.creator == msg.sender, "ElectionFactory: Not the election creator");
         
         // Call delete on the election contract
@@ -202,7 +187,8 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
      */
     function getElectionContract(uint256 _electionId) 
         external 
-        view 
+        view
+        override 
         electionMustExist(_electionId) 
         returns (address) 
     {
@@ -216,11 +202,12 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
      */
     function getElection(uint256 _electionId) 
         external 
-        view 
+        view
+        override 
         electionMustExist(_electionId) 
-        returns (ElectionSetup.ElectionConfig memory) 
+        returns (IElection.ElectionConfig memory) 
     {
-        ElectionSetup election = ElectionSetup(elections[_electionId]);
+        Election election = Election(elections[_electionId]);
         return election.getElection();
     }
     
@@ -231,11 +218,12 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
      */
     function getElectionBasicInfo(uint256 _electionId) 
         external 
-        view 
+        view
+        override 
         electionMustExist(_electionId) 
-        returns (ElectionSetup.ElectionBasicInfo memory) 
+        returns (IElection.ElectionBasicInfo memory) 
     {
-        ElectionSetup election = ElectionSetup(elections[_electionId]);
+        Election election = Election(elections[_electionId]);
         return election.getElectionBasicInfo();
     }
     
@@ -246,7 +234,8 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
      */
     function getElectionsByCreator(address _creator) 
         external 
-        view 
+        view
+        override 
         returns (uint256[] memory) 
     {
         return creatorElections[_creator];
@@ -256,7 +245,7 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
      * @dev Gets the current election ID counter
      * @return Current election count
      */
-    function getCurrentElectionId() external view returns (uint256) {
+    function getCurrentElectionId() external view override returns (uint256) {
         return _electionIds;
     }
     
@@ -267,7 +256,8 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
      */
     function getAllElections() 
         external 
-        view 
+        view
+        override 
         returns (uint256[] memory electionIds, address[] memory electionContracts) 
     {
         uint256 totalElections = _electionIds;
@@ -289,7 +279,7 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
      */
     function getElectionContractsByCreator(address _creator) 
         external 
-        view 
+        view
         returns (address[] memory) 
     {
         uint256[] memory electionIds = creatorElections[_creator];
@@ -355,5 +345,37 @@ contract ElectionFactory is Ownable, ReentrancyGuard, Pausable {
         require(bytes(input.loginInstructions).length <= 2000, "ElectionFactory: Login instructions too long");
         require(bytes(input.voteConfirmation).length <= 2000, "ElectionFactory: Vote confirmation too long");
         require(bytes(input.afterElectionMessage).length <= 2000, "ElectionFactory: After election message too long");
+    }
+    
+    /**
+     * @dev Converts a uint to a string
+     * @param _i uint to convert
+     * @return _uintAsString string representation of the uint
+     */
+    function _uint2str(uint256 _i) internal pure returns (string memory _uintAsString) {
+        if (_i == 0) {
+            return "0";
+        }
+        
+        uint256 j = _i;
+        uint256 len;
+        
+        while (j != 0) {
+            len++;
+            j /= 10;
+        }
+        
+        bytes memory bstr = new bytes(len);
+        uint256 k = len;
+        
+        while (_i != 0) {
+            k = k - 1;
+            uint8 temp = (48 + uint8(_i - _i / 10 * 10));
+            bytes1 b1 = bytes1(temp);
+            bstr[k] = b1;
+            _i /= 10;
+        }
+        
+        return string(bstr);
     }
 }
