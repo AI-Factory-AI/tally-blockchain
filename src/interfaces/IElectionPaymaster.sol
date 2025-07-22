@@ -2,10 +2,10 @@
 pragma solidity ^0.8.19;
 
 /**
- * @title IPaymaster
+ * @title IElectionPaymaster
  * @dev Interface for the paymaster contract that sponsors gas fees for elections
  */
-interface IPaymaster {
+interface IElectionPaymaster {
     /**
      * @dev Authorizes an election to use this paymaster
      * @param _election Address of the election contract

@@ -1,18 +1,22 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.23;
+pragma solidity ^0.8.28;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
-import "./interfaces/IPaymaster.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "./interfaces/IElectionPaymaster.sol";
 import "./Election.sol";
+import "@account-abstraction/contracts/core/BasePaymaster.sol";
+import "@account-abstraction/contracts/interfaces/IEntryPoint.sol";
+import "@account-abstraction/contracts/interfaces/IPaymaster.sol";
+import "@account-abstraction/contracts/interfaces/PackedUserOperation.sol";
+
 
 /**
  * @title ElectionPaymaster
  * @dev Paymaster contract for gasless voting in elections
  * @author Election System
  */
-contract ElectionPaymaster is IPaymaster, Ownable, ReentrancyGuard, Pausable {
+contract ElectionPaymaster is BasePaymaster, Pausable, IElectionPaymaster {
     // ============ State Variables ============
 
     // Factory contract reference
@@ -30,9 +34,6 @@ contract ElectionPaymaster is IPaymaster, Ownable, ReentrancyGuard, Pausable {
     // Votes processed per election
     mapping(address => uint256) public electionVotesProcessed;
 
-    // Voter nonces to prevent replay attacks
-    mapping(bytes32 => bool) public usedNonces;
-
     // ============ Events ============
 
     event ElectionAuthorized(address indexed election, uint256 voteLimit);
@@ -49,32 +50,13 @@ contract ElectionPaymaster is IPaymaster, Ownable, ReentrancyGuard, Pausable {
 
     event FactoryUpdated(address indexed newFactory);
 
-    // ============ Modifiers ============
-
-    modifier onlyAuthorizedElection(address _election) {
-        require(
-            authorizedElections[_election],
-            "ElectionPaymaster: Election not authorized"
-        );
-        require(
-            electionVotesProcessed[_election] < electionVoteLimits[_election],
-            "ElectionPaymaster: Vote limit exceeded for this election"
-        );
-        _;
-    }
-
-    modifier nonceNotUsed(bytes32 _nonce) {
-        require(!usedNonces[_nonce], "ElectionPaymaster: Nonce already used");
-        _;
-    }
-
     // ============ Constructor ============
 
-    constructor(address _electionFactory) Ownable(msg.sender) {
+    constructor(IEntryPoint _entryPoint, address _electionFactory) BasePaymaster(_entryPoint) {
         electionFactory = _electionFactory;
     }
 
-    // ============ External Functions ============
+    // ============ Election Management ============
 
     /**
      * @dev Authorizes an election to use this paymaster
@@ -142,49 +124,6 @@ contract ElectionPaymaster is IPaymaster, Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
-     * @dev Executes a vote on behalf of a voter (gasless voting)
-     * @param _election Address of the election contract
-     * @param _voterId ID of the voter
-     * @param _voterKeyHash Hash of the voter's key
-     * @param _choices Array of candidate choices
-     * @param _ipfsCid IPFS CID for vote receipt
-     * @param _nonce Unique nonce to prevent replay attacks
-     */
-    function executeVote(
-        address _election,
-        string calldata _voterId,
-        bytes32 _voterKeyHash,
-        bytes32[] calldata _choices,
-        string calldata _ipfsCid,
-        bytes32 _nonce
-    )
-        external
-        override
-        nonReentrant
-        whenNotPaused
-        onlyAuthorizedElection(_election)
-        nonceNotUsed(_nonce)
-    {
-        // Mark nonce as used
-        usedNonces[_nonce] = true;
-
-        // Call the election contract
-        Election election = Election(_election);
-        election.castVoteWithPaymaster(
-            _voterId,
-            _voterKeyHash,
-            _choices,
-            _ipfsCid
-        );
-
-        // Update vote counts
-        electionVotesProcessed[_election]++;
-        totalVotesProcessed++;
-
-        emit VoteProcessed(_election, _voterId, block.timestamp);
-    }
-
-    /**
      * @dev Updates the election factory address
      * @param _newFactory Address of the new factory
      */
@@ -213,6 +152,38 @@ contract ElectionPaymaster is IPaymaster, Ownable, ReentrancyGuard, Pausable {
         _unpause();
     }
 
+    // ============ EIP-4337 Paymaster Logic ============
+
+    function _validatePaymasterUserOp(
+        PackedUserOperation calldata userOp,
+        bytes32 /*userOpHash*/,
+        uint256 /*maxCost*/
+    ) internal override whenNotPaused returns (bytes memory context, uint256 validationData) {
+        // Decode callData to extract election address and enforce authorization/limits
+        (address electionAddr, string memory voterId, bytes32 voterKeyHash, bytes32[] memory choices, string memory ipfsCid) = abi.decode(userOp.callData[4:], (address, string, bytes32, bytes32[], string));
+        require(authorizedElections[electionAddr], "ElectionPaymaster: Election not authorized");
+        require(electionVotesProcessed[electionAddr] < electionVoteLimits[electionAddr], "ElectionPaymaster: Vote limit exceeded for this election");
+        // Optionally, add more checks (e.g., time, signature, etc.)
+        // Return context for postOp
+        context = abi.encode(electionAddr, voterId);
+        validationData = 0; // 0 = valid
+    }
+    function _postOp(
+        IPaymaster.PostOpMode mode,
+        bytes calldata context,
+        uint256 /*actualGasCost*/,
+        uint256 /*actualUserOpFeePerGas*/
+    ) internal override {
+        // Decode context
+        (address electionAddr, string memory voterId) = abi.decode(context, (address, string));
+        if (mode == IPaymaster.PostOpMode.opSucceeded) {
+            electionVotesProcessed[electionAddr]++;
+            totalVotesProcessed++;
+            emit VoteProcessed(electionAddr, voterId, block.timestamp);
+        }
+        // If opReverted, you may want to handle differently (e.g., log, revert, etc.)
+    }
+
     /**
      * @dev Allows the contract to receive ETH for gas costs
      */
@@ -234,5 +205,16 @@ contract ElectionPaymaster is IPaymaster, Ownable, ReentrancyGuard, Pausable {
         );
 
         _to.transfer(_amount);
+    }
+
+    function executeVote(
+        address _election,
+        string calldata _voterId,
+        bytes32 _voterKeyHash,
+        bytes32[] calldata _choices,
+        string calldata _ipfsCid,
+        bytes32 _nonce
+    ) external override {
+        revert("ElectionPaymaster: executeVote not implemented");
     }
 }
