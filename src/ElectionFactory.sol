@@ -94,50 +94,21 @@ contract ElectionFactory is IElectionFactory, Ownable, ReentrancyGuard, Pausable
         validElectionTiming(input.startTime, input.endTime)
         returns (uint256 electionId, address electionContract) 
     {
-        // Validate payment
         require(msg.value >= electionCreationFee, "ElectionFactory: Insufficient fee");
-        
-        // Validate input strings
         _validateElectionStrings(input);
-        
-        // Increment election ID counter
         _electionIds++;
         electionId = _electionIds;
-        
-        // Deploy new Election contract
-        Election newElection = new Election(
-            msg.sender,
-            input.title,
-            input.description,
-            input.startTime,
-            input.endTime,
-            input.timezone,
-            input.ballotReceipt,
-            input.submitConfirmation,
-            input.maxVotersCount,
-            input.allowVoterRegistration,
-            input.loginInstructions,
-            input.voteConfirmation,
-            input.afterElectionMessage,
-            input.publicResults,
-            input.realTimeResults,
-            input.resultsReleaseTime,
-            input.allowResultsDownload
-        );
-        
-        electionContract = address(newElection);
-        
+        // Deploy new Election contract via helper to avoid stack too deep
+        electionContract = _deployElection(input);
         // Update mappings
         elections[electionId] = electionContract;
         electionExists[electionId] = true;
         isElectionContract[electionContract] = true;
         creatorElections[msg.sender].push(electionId);
-        
         // Generate election URL
         string memory baseUrl = "https://tally/vote/";
         string memory electionUrl = string(abi.encodePacked(baseUrl, _uint2str(electionId)));
-        newElection.setElectionUrl(electionUrl);
-        
+        Election(electionContract).setElectionUrl(electionUrl);
         // Emit event
         emit ElectionCreated(
             electionId,
@@ -147,13 +118,46 @@ contract ElectionFactory is IElectionFactory, Ownable, ReentrancyGuard, Pausable
             input.startTime,
             input.endTime
         );
-        
         // Refund excess payment
         if (msg.value > electionCreationFee) {
             payable(msg.sender).transfer(msg.value - electionCreationFee);
         }
-        
         return (electionId, electionContract);
+    }
+
+    function _deployElection(CreateElectionInput calldata input) private returns (address) {
+        Election.ElectionBasicParams memory basicParams = Election.ElectionBasicParams({
+            creator: msg.sender,
+            title: input.title,
+            description: input.description,
+            startTime: input.startTime,
+            endTime: input.endTime,
+            timezone: input.timezone
+        });
+        Election.ElectionVotingParams memory votingParams = Election.ElectionVotingParams({
+            ballotReceipt: input.ballotReceipt,
+            submitConfirmation: input.submitConfirmation,
+            maxVotersCount: input.maxVotersCount,
+            allowVoterRegistration: input.allowVoterRegistration
+        });
+        Election.ElectionMessagesParams memory messagesParams = Election.ElectionMessagesParams({
+            loginInstructions: input.loginInstructions,
+            voteConfirmation: input.voteConfirmation,
+            afterElectionMessage: input.afterElectionMessage
+        });
+        Election.ElectionResultsParams memory resultsParams = Election.ElectionResultsParams({
+            publicResults: input.publicResults,
+            realTimeResults: input.realTimeResults,
+            resultsReleaseTime: input.resultsReleaseTime,
+            allowResultsDownload: input.allowResultsDownload
+        });
+        Election newElection = new Election(
+            basicParams,
+            votingParams,
+            messagesParams,
+            resultsParams
+        );
+        return address(newElection);
     }
     
     /**

@@ -51,6 +51,37 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
     address public paymaster;
     mapping(address => bool) public authorizedPaymasters;
 
+    // ============ Structs for Constructor ============
+
+    struct ElectionBasicParams {
+        address creator;
+        string title;
+        string description;
+        uint256 startTime;
+        uint256 endTime;
+        string timezone;
+    }
+
+    struct ElectionVotingParams {
+        bool ballotReceipt;
+        bool submitConfirmation;
+        uint256 maxVotersCount;
+        bool allowVoterRegistration;
+    }
+
+    struct ElectionMessagesParams {
+        string loginInstructions;
+        string voteConfirmation;
+        string afterElectionMessage;
+    }
+
+    struct ElectionResultsParams {
+        bool publicResults;
+        bool realTimeResults;
+        uint256 resultsReleaseTime;
+        bool allowResultsDownload;
+    }
+
     // ============ Events ============
 
     event ElectionUpdated(address indexed updater, string field);
@@ -156,59 +187,46 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
     // ============ Constructor ============
 
     constructor(
-        address _creator,
-        string memory _title,
-        string memory _description,
-        uint256 _startTime,
-        uint256 _endTime,
-        string memory _timezone,
-        bool _ballotReceipt,
-        bool _submitConfirmation,
-        uint256 _maxVotersCount,
-        bool _allowVoterRegistration,
-        string memory _loginInstructions,
-        string memory _voteConfirmation,
-        string memory _afterElectionMessage,
-        bool _publicResults,
-        bool _realTimeResults,
-        uint256 _resultsReleaseTime,
-        bool _allowResultsDownload
-    ) Ownable(_creator) {
+        ElectionBasicParams memory _basicParams,
+        ElectionVotingParams memory _votingParams,
+        ElectionMessagesParams memory _messagesParams,
+        ElectionResultsParams memory _resultsParams
+    ) Ownable(_basicParams.creator) {
         factory = msg.sender;
 
         // Initialize election configuration
         electionConfig.basicInfo = ElectionBasicInfo({
-            title: _title,
-            description: _description,
-            creator: _creator,
+            title: _basicParams.title,
+            description: _basicParams.description,
+            creator: _basicParams.creator,
             createdAt: block.timestamp,
             status: ElectionStatus.DRAFT
         });
 
         electionConfig.timing = ElectionTiming({
-            startTime: _startTime,
-            endTime: _endTime,
-            timezone: _timezone
+            startTime: _basicParams.startTime,
+            endTime: _basicParams.endTime,
+            timezone: _basicParams.timezone
         });
 
         electionConfig.votingSettings = VotingSettings({
-            ballotReceipt: _ballotReceipt,
-            submitConfirmation: _submitConfirmation,
-            maxVotersCount: _maxVotersCount,
-            allowVoterRegistration: _allowVoterRegistration
+            ballotReceipt: _votingParams.ballotReceipt,
+            submitConfirmation: _votingParams.submitConfirmation,
+            maxVotersCount: _votingParams.maxVotersCount,
+            allowVoterRegistration: _votingParams.allowVoterRegistration
         });
 
         electionConfig.messages = ElectionMessages({
-            loginInstructions: _loginInstructions,
-            voteConfirmation: _voteConfirmation,
-            afterElectionMessage: _afterElectionMessage
+            loginInstructions: _messagesParams.loginInstructions,
+            voteConfirmation: _messagesParams.voteConfirmation,
+            afterElectionMessage: _messagesParams.afterElectionMessage
         });
 
         electionConfig.resultsConfig = ResultsConfig({
-            publicResults: _publicResults,
-            realTimeResults: _realTimeResults,
-            resultsReleaseTime: _resultsReleaseTime,
-            allowResultsDownload: _allowResultsDownload
+            publicResults: _resultsParams.publicResults,
+            realTimeResults: _resultsParams.realTimeResults,
+            resultsReleaseTime: _resultsParams.resultsReleaseTime,
+            allowResultsDownload: _resultsParams.allowResultsDownload
         });
     }
 
@@ -651,6 +669,20 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
         emit PaymasterUpdated(_paymaster, _authorized);
     }
 
+    /**
+     * @dev Pauses the election
+     */
+    function pause() external onlyElectionCreator {
+        _pause();
+    }
+
+    /**
+     * @dev Unpauses the election
+     */
+    function unpause() external onlyElectionCreator {
+        _unpause();
+    }
+
     // ============ View Functions ============
 
     /**
@@ -864,19 +896,5 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
         voteCount++;
 
         emit VoteCast(_voterId, block.timestamp, _ipfsCid);
-    }
-
-    /**
-     * @dev Pauses the election
-     */
-    function pause() external onlyElectionCreator {
-        _pause();
-    }
-
-    /**
-     * @dev Unpauses the election
-     */
-    function unpause() external onlyElectionCreator {
-        _unpause();
     }
 }
