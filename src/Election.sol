@@ -6,6 +6,41 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "./interfaces/IElection.sol";
 
+
+
+/**
+
+
+[
+  [
+    "0x5B38Da6a701c568545dCfcB03FcB875f56beddC4",
+    "Election 2025",
+    "A test election to demonstrate full constructor parameters.",
+    1764000000,
+    1764086400,
+    "UTC"
+  ],
+  [
+    true,
+    true,
+    1000,
+    true
+  ],
+  [
+    "Please follow the on-screen instructions carefully.",
+    "Your vote has been recorded.",
+    "Thank you for voting in Election 2025."
+  ],
+  [
+    true,
+    false,
+    1764090000,
+    true
+  ]
+]
+
+*/
+
 /**
  * @title Election
  * @dev Individual election contract for managing a single election with IPFS integration
@@ -13,7 +48,6 @@ import "./interfaces/IElection.sol";
  */
 contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
     // ============ Constants ============
-
     uint256 public constant MAX_TITLE_LENGTH = 200;
     uint256 public constant MAX_DESCRIPTION_LENGTH = 5000;
     uint256 public constant MAX_MESSAGE_LENGTH = 2000;
@@ -21,7 +55,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
     uint256 public constant MAX_ELECTION_DURATION = 365 days;
 
     // ============ State Variables ============
-
     ElectionConfig public electionConfig;
     address public immutable factory;
 
@@ -52,7 +85,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
     mapping(address => bool) public authorizedPaymasters;
 
     // ============ Structs for Constructor ============
-
     struct ElectionBasicParams {
         address creator;
         string title;
@@ -61,20 +93,17 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
         uint256 endTime;
         string timezone;
     }
-
     struct ElectionVotingParams {
         bool ballotReceipt;
         bool submitConfirmation;
         uint256 maxVotersCount;
         bool allowVoterRegistration;
     }
-
     struct ElectionMessagesParams {
         string loginInstructions;
         string voteConfirmation;
         string afterElectionMessage;
     }
-
     struct ElectionResultsParams {
         bool publicResults;
         bool realTimeResults;
@@ -83,38 +112,28 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
     }
 
     // ============ Events ============
-
     event ElectionUpdated(address indexed updater, string field);
-
     event ElectionStatusChanged(
         ElectionStatus oldStatus,
         ElectionStatus newStatus
     );
-
     event BallotAdded(
         uint256 indexed ballotId,
         string title,
         bool isMultipleChoice,
         string ipfsCid
     );
-
     event VoterAdded(string voterId, address voterAddress, uint256 voteWeight);
-
     event VotersBatchAdded(uint256 count, string ipfsCid);
-
     event VoteCast(string voterId, uint256 timestamp, string ipfsCid);
-
     event ElectionMetadataUpdated(
         string electionMetadataUri,
         string ballotMetadataUri
     );
-
     event ElectionUrlGenerated(string electionUrl);
-
     event PaymasterUpdated(address paymaster, bool authorized);
 
     // ============ Modifiers ============
-
     modifier onlyElectionCreator() {
         require(
             electionConfig.basicInfo.creator == msg.sender,
@@ -122,7 +141,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
         );
         _;
     }
-
     modifier onlyCreatorOrFactory() {
         require(
             electionConfig.basicInfo.creator == msg.sender ||
@@ -131,7 +149,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
         );
         _;
     }
-
     modifier validElectionTiming(uint256 _startTime, uint256 _endTime) {
         require(
             _startTime > block.timestamp,
@@ -151,7 +168,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
         );
         _;
     }
-
     modifier notDeleted() {
         require(
             electionConfig.basicInfo.status != ElectionStatus.DELETED,
@@ -159,7 +175,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
         );
         _;
     }
-
     modifier onlyActiveElection() {
         require(
             electionConfig.basicInfo.status == ElectionStatus.ACTIVE,
@@ -167,7 +182,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
         );
         _;
     }
-
     modifier onlyRegisteredVoter(string memory _voterId) {
         require(
             bytes(votersByVoterId[_voterId].voterId).length > 0,
@@ -175,7 +189,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
         );
         _;
     }
-
     modifier onlyAuthorizedPaymaster() {
         require(
             authorizedPaymasters[msg.sender] || msg.sender == paymaster,
@@ -185,7 +198,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
     }
 
     // ============ Constructor ============
-
     constructor(
         ElectionBasicParams memory _basicParams,
         ElectionVotingParams memory _votingParams,
@@ -193,7 +205,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
         ElectionResultsParams memory _resultsParams
     ) Ownable(_basicParams.creator) {
         factory = msg.sender;
-
         // Initialize election configuration
         electionConfig.basicInfo = ElectionBasicInfo({
             title: _basicParams.title,
@@ -202,26 +213,22 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
             createdAt: block.timestamp,
             status: ElectionStatus.DRAFT
         });
-
         electionConfig.timing = ElectionTiming({
             startTime: _basicParams.startTime,
             endTime: _basicParams.endTime,
             timezone: _basicParams.timezone
         });
-
         electionConfig.votingSettings = VotingSettings({
             ballotReceipt: _votingParams.ballotReceipt,
             submitConfirmation: _votingParams.submitConfirmation,
             maxVotersCount: _votingParams.maxVotersCount,
             allowVoterRegistration: _votingParams.allowVoterRegistration
         });
-
         electionConfig.messages = ElectionMessages({
             loginInstructions: _messagesParams.loginInstructions,
             voteConfirmation: _messagesParams.voteConfirmation,
             afterElectionMessage: _messagesParams.afterElectionMessage
         });
-
         electionConfig.resultsConfig = ResultsConfig({
             publicResults: _resultsParams.publicResults,
             realTimeResults: _resultsParams.realTimeResults,
@@ -231,7 +238,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
     }
 
     // ============ External Functions ============
-
     /**
      * @dev Updates election basic information
      * @param _title New title
@@ -245,7 +251,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
             electionConfig.basicInfo.status == ElectionStatus.DRAFT,
             "Election: Can only update draft elections"
         );
-
         require(
             bytes(_title).length > 0 &&
                 bytes(_title).length <= MAX_TITLE_LENGTH,
@@ -255,10 +260,8 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
             bytes(_description).length <= MAX_DESCRIPTION_LENGTH,
             "Election: Description too long"
         );
-
         electionConfig.basicInfo.title = _title;
         electionConfig.basicInfo.description = _description;
-
         emit ElectionUpdated(msg.sender, "basicInfo");
     }
 
@@ -282,11 +285,9 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
             electionConfig.basicInfo.status == ElectionStatus.DRAFT,
             "Election: Can only update draft elections"
         );
-
         electionConfig.timing.startTime = _startTime;
         electionConfig.timing.endTime = _endTime;
         electionConfig.timing.timezone = _timezone;
-
         emit ElectionUpdated(msg.sender, "timing");
     }
 
@@ -301,9 +302,7 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
             electionConfig.basicInfo.status == ElectionStatus.DRAFT,
             "Election: Can only update draft elections"
         );
-
         electionConfig.votingSettings = _settings;
-
         emit ElectionUpdated(msg.sender, "votingSettings");
     }
 
@@ -318,7 +317,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
             electionConfig.basicInfo.status == ElectionStatus.DRAFT,
             "Election: Can only update draft elections"
         );
-
         require(
             bytes(_messages.loginInstructions).length <= MAX_MESSAGE_LENGTH,
             "Election: Login instructions too long"
@@ -331,9 +329,7 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
             bytes(_messages.afterElectionMessage).length <= MAX_MESSAGE_LENGTH,
             "Election: After election message too long"
         );
-
         electionConfig.messages = _messages;
-
         emit ElectionUpdated(msg.sender, "messages");
     }
 
@@ -348,9 +344,7 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
             electionConfig.basicInfo.status == ElectionStatus.DRAFT,
             "Election: Can only update draft elections"
         );
-
         electionConfig.resultsConfig = _resultsConfig;
-
         emit ElectionUpdated(msg.sender, "resultsConfig");
     }
 
@@ -368,7 +362,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
         _validateStatusTransition(currentStatus, _newStatus);
 
         electionConfig.basicInfo.status = _newStatus;
-
         emit ElectionStatusChanged(currentStatus, _newStatus);
     }
 
@@ -380,9 +373,7 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
             electionConfig.basicInfo.status != ElectionStatus.ACTIVE,
             "Election: Cannot delete active election"
         );
-
         electionConfig.basicInfo.status = ElectionStatus.DELETED;
-
         emit ElectionStatusChanged(
             electionConfig.basicInfo.status,
             ElectionStatus.DELETED
@@ -400,7 +391,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
     ) external override onlyCreatorOrFactory notDeleted {
         electionMetadataUri = _electionMetadataUri;
         ballotMetadataUri = _ballotMetadataUri;
-
         emit ElectionMetadataUpdated(_electionMetadataUri, _ballotMetadataUri);
     }
 
@@ -421,10 +411,8 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
             electionConfig.basicInfo.status == ElectionStatus.DRAFT,
             "Election: Can only add ballots to draft elections"
         );
-
         ballotCount++;
         uint256 ballotId = ballotCount;
-
         ballots[ballotId] = Ballot({
             id: ballotId,
             title: _title,
@@ -433,7 +421,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
             ipfsCid: _ipfsCid,
             createdAt: block.timestamp
         });
-
         emit BallotAdded(ballotId, _title, _isMultipleChoice, _ipfsCid);
     }
 
@@ -462,7 +449,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
             voterCount < electionConfig.votingSettings.maxVotersCount,
             "Election: Maximum voters reached"
         );
-
         votersByVoterId[_voterId] = Voter({
             voterId: _voterId,
             voterAddress: _voterAddress,
@@ -470,11 +456,9 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
             hasVoted: false,
             registeredAt: block.timestamp
         });
-
         voterIdsByAddress[_voterAddress] = _voterId;
         voterKeyHashes[_voterKeyHash] = true;
         voterCount++;
-
         emit VoterAdded(_voterId, _voterAddress, _voteWeight);
     }
 
@@ -501,7 +485,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
                 electionConfig.votingSettings.maxVotersCount,
             "Election: Maximum voters would be exceeded"
         );
-
         for (uint256 i = 0; i < _voterIds.length; i++) {
             require(
                 bytes(_voterIds[i]).length > 0,
@@ -511,7 +494,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
                 bytes(votersByVoterId[_voterIds[i]].voterId).length == 0,
                 "Election: Voter ID already exists"
             );
-
             votersByVoterId[_voterIds[i]] = Voter({
                 voterId: _voterIds[i],
                 voterAddress: _voterAddresses[i],
@@ -519,13 +501,10 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
                 hasVoted: false,
                 registeredAt: block.timestamp
             });
-
             voterIdsByAddress[_voterAddresses[i]] = _voterIds[i];
         }
-
         voterCount += _voterIds.length;
         voterMetadataUri = _ipfsCid;
-
         emit VotersBatchAdded(_voterIds.length, _ipfsCid);
     }
 
@@ -540,7 +519,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
             !voterKeyHashes[_voterKeyHash],
             "Election: Voter key hash already registered"
         );
-
         voterKeyHashes[_voterKeyHash] = true;
     }
 
@@ -562,7 +540,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
         nonReentrant
     {
         Voter storage voter = votersByVoterId[_voterId];
-
         // Check if the sender is the registered voter
         require(
             voter.voterAddress == msg.sender ||
@@ -570,7 +547,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
                 keccak256(abi.encodePacked(_voterId)),
             "Election: Not authorized to vote for this ID"
         );
-
         require(!voter.hasVoted, "Election: Voter has already voted");
 
         // Record the vote
@@ -597,7 +573,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
         nonReentrant
     {
         require(voterKeyHashes[_voterKeyHash], "Election: Invalid voter key");
-
         Voter storage voter = votersByVoterId[_voterId];
         require(!voter.hasVoted, "Election: Voter has already voted");
 
@@ -626,7 +601,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
         nonReentrant
     {
         require(voterKeyHashes[_voterKeyHash], "Election: Invalid voter key");
-
         Voter storage voter = votersByVoterId[_voterId];
         require(!voter.hasVoted, "Election: Voter has already voted");
 
@@ -642,7 +616,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
         string calldata _electionUrl
     ) external override onlyCreatorOrFactory notDeleted {
         electionUrl = _electionUrl;
-
         emit ElectionUrlGenerated(_electionUrl);
     }
 
@@ -659,13 +632,10 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
             _paymaster != address(0),
             "Election: Invalid paymaster address"
         );
-
         if (_authorized && paymaster == address(0)) {
             paymaster = _paymaster;
         }
-
         authorizedPaymasters[_paymaster] = _authorized;
-
         emit PaymasterUpdated(_paymaster, _authorized);
     }
 
@@ -684,7 +654,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
     }
 
     // ============ View Functions ============
-
     /**
      * @dev Gets complete election configuration
      * @return Election configuration
@@ -775,7 +744,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
             _ballotId > 0 && _ballotId <= ballotCount,
             "Election: Invalid ballot ID"
         );
-
         return ballots[_ballotId];
     }
 
@@ -815,15 +783,12 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
         if (bytes(votersByVoterId[_voterId].voterId).length == 0) {
             return false;
         }
-
         if (!voterKeyHashes[_voterKeyHash]) {
             return false;
         }
-
         if (votersByVoterId[_voterId].hasVoted) {
             return false;
         }
-
         return true;
     }
 
@@ -839,7 +804,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
     }
 
     // ============ Internal Functions ============
-
     /**
      * @dev Validates status transitions
      * @param _currentStatus Current election status
@@ -884,7 +848,6 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
     ) internal {
         // Mark voter as having voted
         votersByVoterId[_voterId].hasVoted = true;
-
         // Store the vote
         votesByVoterId[_voterId] = Vote({
             voterId: _voterId,
@@ -892,9 +855,7 @@ contract Election is IElection, Ownable, ReentrancyGuard, Pausable {
             timestamp: block.timestamp,
             ipfsCid: _ipfsCid
         });
-
         voteCount++;
-
         emit VoteCast(_voterId, block.timestamp, _ipfsCid);
     }
 }
